@@ -1,0 +1,22 @@
+hadas:
+    port : 5432
+    login : 'postgres' 
+    password : 'ICaabSNEpqdbCA9'
+    host : '10.124.9.158' 
+    schema : 'dhealth'
+ 
+dhealth:
+    mssql_driver  :  'ODBC Driver 17 for SQL Server'
+    port  :  1433
+    SERVER : '10.124.9.137;'
+    UID : 'hadas;'
+    PWD : 'Het451es;'
+
+rabbitmq:
+    credentials : 'amqp://user:Ev697BQ4IzGS@10.124.9.157:5672/dhealth.dev/heartbeat=300'
+
+mongo:
+    credentials: 'mongodb://admin:9d5c53bcd83ce78188a7e2@10.124.9.137:27017'
+    database: 'devLogs'
+
+ 
