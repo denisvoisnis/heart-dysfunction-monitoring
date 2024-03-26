@@ -65,8 +65,8 @@ def get_data_from_mongo( UserId, collections):
     query = {
         "$and": [
             {"user_id": UserId}
-            ,{"_id": {"$in":id_list}}
-            # ,{"_id": {"$nin":id_list}}         
+            #,{"_id": {"$in":id_list}}
+            ,{"_id": {"$nin":id_list}}         
         ]
     }
         
