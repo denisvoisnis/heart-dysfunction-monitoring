@@ -1,14 +1,14 @@
 ##!/usr/bin/env python
 import pika
 import os
-import time
+# import time
 from pika.exchange_type import ExchangeType
 from datetime import datetime, timezone
 import logging
 from logging.handlers import RotatingFileHandler
 import json
 import pandas as pd
-from pymongo.errors import ServerSelectionTimeoutError
+# from pymongo.errors import ServerSelectionTimeoutError
 from pymongo import MongoClient
 from bson import ObjectId
 from heart_PA_ppg import heart_PA_ppg
@@ -25,6 +25,36 @@ log_args = {
 }
 
 
+# return msg error
+# update msg 
+# {
+#   "id": "65ca0cc4f0f90d1c7159fe4d", // +
+#             "duration": "5.83", // - missing 
+#             "steps": "760", // + step_count
+#             "hr_max": "190", // - missing
+#             "fast_phase": "-1.518", // - missing
+#             "slow_phase": "8.667", // - missing
+#             "postural_sway": "2.8702", // - missing
+#             "heart_rate_reserve": "70", //measured in percentage
+#             "lisajous_index": "36.570", // - missing
+#             "gait_asymmetry": "9.67", // - missing
+#             "movement_vigor": "71.05", // - missing
+#             "stride_time": "1.83", // - missing
+#             "gait_irregularity": "0.3537", // - missing
+#             "cadence": "110.60", // - missing
+#             "xmin_walk_test": "400" // - missing
+#             "rest_SQI": "0.988", // +
+#             "SDNN": "0.068558", // +
+#             "if_hf": "0.962051", // +
+#             "HR_baseline": "87.5", // +
+#             "active_minutes": "18", // +
+#             "longest_walking_bout": "7", // +
+#             "mean_walking_bout": "2", // +
+#             "sedentary_time": "201" // +
+#             "testType": "walking", // +
+#             "device": "Polar" // +
+#             "userId": "123" // +
+# }
 
 def init_pg_connection():
     path = __location__  
@@ -65,13 +95,13 @@ def get_data_from_mongo( UserId, collections):
     query = {
         "$and": [
             {"user_id": UserId}
-            #,{"_id": {"$in":id_list}}
+            # ,{"_id": {"$in":id_list}}
             ,{"_id": {"$nin":id_list}}         
         ]
     }
         
     data = list(collections.find(query))
-    return data, id_list
+    return data
 
 
 def manage_msg_body(body):
@@ -80,7 +110,7 @@ def manage_msg_body(body):
     log_args['datasource_id'] = None
     log_args['level'] = 'ERROR'
     pg_conn = init_pg_connection()
-    print(body)
+    
     try:
         msg_body =json.loads(body)
     except Exception as e:
@@ -91,34 +121,53 @@ def manage_msg_body(body):
     messageType =  msg_body['messageType'] 
     sentTime = msg_body['sentTime'] 
     userId = msg_body['message']['userId']
-    # metadata = msg_body['message']['metadata']
-    metadata = []
+    
     pg_conn.dispose()
-    return  messageId, conversationId, messageType, sentTime, userId, metadata
-
+    return  messageId, conversationId, messageType, sentTime, userId
 
 def process_jsons(body):
-    messageId, conversationId, messageType, sentTime, userId, metadata = manage_msg_body(body)
+    messageId, conversationId, messageType, sentTime, userId = manage_msg_body(body)
     log_args['function'] = 'process_jsons'
     log_args['datasource_id'] = None
     log_args['level'] = 'ERROR'
     pg_conn = init_pg_connection()
-    collection_data, id_list, metadata = [], [],[]
+    collection_data  = [],[]
     collections = create_mongo_conection()
     try: 
-        collection_data, id_list = get_data_from_mongo( userId, collections) 
+        collection_data = get_data_from_mongo( userId, collections) 
     except Exception as e:
         log_write(pg_conn , description="Error in retreaving data from mongo db" + e.__str__(), **log_args)
         
-    if len(collection_data) == 0 or len(id_list) == 0:
+    if len(collection_data) == 0 :
         log_args['level'] = 'WARNING'
-        log_write(pg_conn , description=f"Warning data is empty: json count { len(collection_data) }, json _id count {len(id_list)}" , **log_args)
+        log_write(pg_conn , description=f"Warning data is empty: json count { len(collection_data) }" , **log_args)
     pg_conn.dispose()
-    return collection_data, id_list, metadata
+       
+    return collection_data, messageId, conversationId, messageType, sentTime, userId
 
 
-def calculate_heart_PA_ecg(collection_data_j, metadata_ecg = dict()):
+def calculate_heart_PA_ecg(collection_data_j):
+    Error_msg = []
    
+    metadata_ecg = {'acc_fs': 200,
+     'position': collection_data_j['position'],
+     'age': collection_data_j['age'],
+     'gender': collection_data_j['gender'],
+     'step_length': 'nan',
+     'height': collection_data_j['height'],
+     'sub_id': 7,
+     'filename': '',
+     'recovery_time': 60,
+     'rest_time': 30,
+     'max_stop': 5,
+     'min_walking_duration': 60,
+     'minimal_walk_test_duration': 300,
+     'max_walking_steps_recovery': 16,
+     'active_minute_steps': 60,
+     'max_steps_during_rest': 5,
+     'fast_phase_window': 30}
+   
+    
     log_args['datasource_id'] = None
     log_args['level'] = 'ERROR'
     pg_conn = init_pg_connection()
@@ -141,33 +190,49 @@ def calculate_heart_PA_ecg(collection_data_j, metadata_ecg = dict()):
             log_args['function'] = 'heart_PA_ecg'
             ecg_instance = heart_PA_ecg(acc_chest, rr, metadata_ecg)
         except Exception as e:
-            log_write(pg_conn , description=f'Error while calculating: {e.__str__()}', **log_args)
-            return []
+            Error_msg=f'Error while calculating ECG: {e.__str__()}'
+            log_write(pg_conn , description=Error_msg, **log_args)
+            return [],[], Error_msg
+        
         try:
             log_args['function'] = 'ecg_instance.perform_analysis'
             df_sig_results_ecg, df_walking_bouts_results_ecg  = ecg_instance.perform_analysis()
         except Exception as e:
             # print('log_args: ' + str(log_args))
-            log_write(pg_conn , description = f'Error while calculating: {e.__str__()}', **log_args)
-            return []
+            Error_msg = f'Error while calculating ECG: {e.__str__()}'
+            log_write(pg_conn , description = Error_msg, **log_args)
+            return [],[], Error_msg
+        
     elif  0 < len(is_chest_there) < len(chest_keys):
         missing_column = [i for i in chest_keys if i not in is_chest_there]
-        log_write(pg_conn ,  description=f'Missing column in mongo collection, cant calcualte heart_PA_ecg. Lost {missing_column}, recerved columns: {is_chest_there}', **log_args)
-        return []
+        Error_msg=f'Missing column in mongo collection, cant calcualte heart_PA_ecg. Lost {missing_column}, recerved columns: {is_chest_there}'
+        log_write(pg_conn ,  description=Error_msg, **log_args)
+        return [],[], Error_msg
+    
     elif len(is_chest_there) == 0:
         log_args['level'] = 'DEBUG'
-        log_write(pg_conn ,  description='No data to calculate heart_PA_ecg', **log_args)   
+        Error_msg='No data to calculate heart_PA_ecg'
+        log_write(pg_conn ,  description=Error_msg, **log_args)   
         pg_conn.dispose()
-        return []
+        return [],[], Error_msg
     pg_conn.dispose()
-    return df_sig_results_ecg, df_walking_bouts_results_ecg
-
+    return df_sig_results_ecg.to_json(), df_walking_bouts_results_ecg.to_json(), Error_msg
 
 
     ##############################################################################################
 
-def calculate_heart_PA_ppg(collection_data_j, metadata_ppg = dict()):
-   
+def calculate_heart_PA_ppg(collection_data_j):
+    Error_msg = []
+    metadata_ppg = {'acc_fs': 50,
+     'ppg_fs': 135,
+     'position': collection_data_j['position'],
+     'age': collection_data_j['age'],
+     'gender': collection_data_j['gender'],
+     'height': collection_data_j['height'],
+     'step_length': 'nan',
+     'sub_id': 7,
+     'filename': ''}
+    
     log_args['datasource_id'] = None
     log_args['level'] = 'ERROR'
     pg_conn = init_pg_connection()
@@ -191,102 +256,82 @@ def calculate_heart_PA_ppg(collection_data_j, metadata_ppg = dict()):
             log_args['function'] = 'heart_PA_ppg'
             ppg_instance = heart_PA_ppg(acc_arm, ppg, metadata_ppg)
         except Exception as e:
-            log_write(pg_conn , description=f'Error while calculating: {e.__str__()}', **log_args)
+            Error_msg=f'Error while calculating PPG: {e.__str__()}'
+            log_write(pg_conn , description=Error_msg , **log_args)
             pg_conn.dispose()
-            return []
+            return [],[], Error_msg
 
         try:
             log_args['function'] = 'ppg_instance.perform_analysis'
             df_sig_results, df_walking_bouts_results  = ppg_instance.perform_analysis()
         except Exception as e:
-            log_write(pg_conn , description=f'Error while calculating: {e.__str__()}', **log_args)
+            Error_msg=f'Error while calculating PPG: {e.__str__()}'
+            log_write(pg_conn ,description=Error_msg , **log_args)
             pg_conn.dispose()
-            return []
+            return [],[], Error_msg
 
     elif  0 < len(is_arm_there) < len(arm_keys):
         missing_column = [i for i in arm_keys if i not in is_arm_there]
-        log_write(pg_conn ,  description=f'Missing column in mongo collection, cant calcualte heart_PA_ppg. Lost {missing_column}, recerved columns: {is_arm_there}', **log_args)   
-        return []
+        Error_msg=f'Missing column in mongo collection, cant calcualte heart_PA_ppg. Lost {missing_column}, recerved columns: {is_arm_there}'
+        log_write(pg_conn ,  description=Error_msg, **log_args)   
+        return [],[], Error_msg
+    
     elif len(is_arm_there) == 0:
         log_args['level'] = 'DEBUG'
-        log_write(pg_conn ,  description='No data to calculate heart_PA_ecg', **log_args)   
+        Error_msg='No data to calculate heart_PA_ecg'
+        log_write(pg_conn ,   description=Error_msg, **log_args)   
         pg_conn.dispose()
-        return []
+        return [],[], Error_msg
+    
     pg_conn.dispose()
-    return df_sig_results, df_walking_bouts_results
+    return df_sig_results.to_json(), df_walking_bouts_results.to_json(), Error_msg
 
-
-
+ 
 def calculate_result(body):
     log_args['datasource_id'] = None
     log_args['level'] = 'ERROR'
     log_args['function'] = 'calculate_result'
 
     pg_conn = init_pg_connection()
-    collection_data, id_list, metadata =  process_jsons(body)
+    collection_data, messageId, conversationId, messageType, sentTime, userId =  process_jsons(body)
+    
+    data = dict()
+    
+    for i, collection_data_j in enumerate(collection_data):
+        df_sig_results =  []
+        df_walking_bouts_results = []
+        position = collection_data_j['position']
+        device = 'polar'
+        testType = 'walking'
+        Error_msg = []
+        
+        if position == 'chest':
+            print('chest')
+            df_sig_results, df_walking_bouts_results, Error_msg = calculate_heart_PA_ecg(collection_data_j)
+        elif position == 'wrist':
+            print('wrist')
+            df_sig_results, df_walking_bouts_results, Error_msg = calculate_heart_PA_ppg(collection_data_j)
 
-    metadata_ecg = {'acc_fs': 200,
-     'position': 'chest',
-     'age': 60,
-     'gender': 1,
-     'step_length': 'nan',
-     'height': 180,
-     'sub_id': 7,
-     'filename': 'C:/Users/daisp/Desktop/Synology/FrailHeart_Data/Patients Data/007/2020-11-23_145836_007',
-     'recovery_time': 60,
-     'rest_time': 30,
-     'max_stop': 5,
-     'min_walking_duration': 60,
-     'baseline_rest_duration': 1,
-     'minimal_walk_test_duration': 300,
-     'max_walking_steps_recovery': 16,
-     'active_minute_steps': 60,
-     'max_steps_during_rest': 5,
-     'fast_phase_window': 30}
-
-
-    metadata_ppg = {'acc_fs': 50,
-     'ppg_fs': 135,
-     'position': 'wrist',
-     'age': 60,
-     'gender': 1,
-     'step_length': 'nan',
-     'height': 180,
-     'sub_id': 7,
-     'filename': 'C:/Users/daisp/Desktop/Synology/FrailHeart_Data/Patients Data/007/2020-11-23_145836_007'}
-    
-    metadata = metadata_ecg
-    
-    
-    data = dict()    
-    
-    if metadata['position'] == 'chest':
-        for i, collection_data_j in enumerate(collection_data):
-            df_sig_results_ecg, df_walking_bouts_results_ecg = calculate_heart_PA_ecg(collection_data_j,  metadata_ecg)
-            # df_sig_results_ecg, df_walking_bouts_results_ecg = 'a' , 'b'
-            _id = id_list[i].__str__()
-            data[_id] = {
-                    'df_sig_results_ecg' : df_sig_results_ecg.to_json(),
-                    'df_walking_bouts_results_ecg' : df_walking_bouts_results_ecg.to_json(),
-                    'position' : metadata['position']
-                }            
-            
-    elif metadata['position'] == 'wrist':
-        for collection_data_j in collection_data:
-            df_sig_results, df_walking_bouts_results = calculate_heart_PA_ppg(collection_data_j,  metadata_ppg)
-            _id = id_list[i]
-            data[_id] = {
-                    'df_sig_results_ecg' : df_sig_results.to_json(),
-                    'df_walking_bouts_results_ecg' : df_walking_bouts_results.to_json(),
-                    'position' : metadata['position']
-                }
+        _id = collection_data_j['_id'].__str__()
+        data[_id] = {
+                    'UserId' :userId,
+                    'df_sig_results' : df_sig_results,
+                    'df_walking_bouts_results' : df_walking_bouts_results,
+                    'position' : position,
+                    'messageId' : messageId,
+                    'conversationId' : conversationId,
+                    'device' : device,
+                    'testType' : testType,
+                    'Error' :  Error_msg
+                }                       
     try:
         data=json.dumps(data)        
     except Exception as e:
         log_args['level'] = 'ERROR'
-        log_write(pg_conn ,  description=f'Could not serialize dictionari into string: {e.__str__()}', **log_args)   
+        Error_msg=f'Could not serialize dictionary into string: {e.__str__()}'
+        log_write(pg_conn ,  description=Error_msg, **log_args)   
         pg_conn.dispose()
-        return []
+        return Error_msg
     return data
 
 
@@ -317,13 +362,14 @@ def answear_to_msg(ch, data):
 
 
 def on_request_message_received(ch, method, properties, body):
-    messageId, conversationId, messageType, sentTime, userId, metadata = manage_msg_body(body)
+    messageId, conversationId, messageType, sentTime, userId = manage_msg_body(body)
     ExtraInfo = dict({
         'sentTime' : sentTime,
         'messageId' : messageId,
         })
     data = calculate_result(body) 
     pg_conn = init_pg_connection()
+    print(data)
     try:
         answear_to_msg(ch, data)
     except Exception as e:
