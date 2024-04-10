@@ -1,6 +1,7 @@
 ##!/usr/bin/env python
 import pika
 import os
+import numpy as np
 # import time
 from pika.exchange_type import ExchangeType
 from datetime import datetime, timezone
@@ -24,38 +25,6 @@ log_args = {
     'logger': logger
 }
 
-
-# return msg error
-# update msg 
-# {
-#   "id": "65ca0cc4f0f90d1c7159fe4d", // +
-#             "duration": "5.83", // - missing 
-#             "steps": "760", // + step_count
-#             "hr_max": "190", // - missing
-#             "fast_phase": "-1.518", // - missing
-#             "slow_phase": "8.667", // - missing
-#             "postural_sway": "2.8702", // - missing
-#             "heart_rate_reserve": "70", //measured in percentage
-#             "lisajous_index": "36.570", // - missing
-#             "gait_asymmetry": "9.67", // - missing
-#             "movement_vigor": "71.05", // - missing
-#             "stride_time": "1.83", // - missing
-#             "gait_irregularity": "0.3537", // - missing
-#             "cadence": "110.60", // - missing
-#             "xmin_walk_test": "400" // - missing
-#             "rest_SQI": "0.988", // +
-#             "SDNN": "0.068558", // +
-#             "if_hf": "0.962051", // +
-#             "HR_baseline": "87.5", // +
-#             "active_minutes": "18", // +
-#             "longest_walking_bout": "7", // +
-#             "mean_walking_bout": "2", // +
-#             "sedentary_time": "201" // +
-#             "testType": "walking", // +
-#             "device": "Polar" // +
-#             "userId": "123" // +
-# }
-
 def init_pg_connection():
     path = __location__  
     hadas = read_credentials( path = path, cred_name = 'hadas')
@@ -70,8 +39,8 @@ def get_ids_notin():
     pg_conn = init_pg_connection()
     query = '''SELECT "MongoId" FROM dhealth."MongoIds"'''
     ids = pd.read_sql(sql= query, con=pg_conn)
+    pg_conn.dispose()
     return ids
-
 
 def create_mongo_conection():
     try:
@@ -153,7 +122,7 @@ def calculate_heart_PA_ecg(collection_data_j):
      'position': collection_data_j['position'],
      'age': collection_data_j['age'],
      'gender': collection_data_j['gender'],
-     'step_length': 'nan',
+     'step_length': np.nan, 
      'height': collection_data_j['height'],
      'sub_id': 7,
      'filename': '',
