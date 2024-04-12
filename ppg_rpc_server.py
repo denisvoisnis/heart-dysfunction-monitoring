@@ -9,7 +9,6 @@ import logging
 from logging.handlers import RotatingFileHandler
 import json
 import pandas as pd
-# from pymongo.errors import ServerSelectionTimeoutError
 from pymongo import MongoClient
 from bson import ObjectId
 from heart_PA_ppg import heart_PA_ppg
@@ -25,6 +24,7 @@ log_args = {
     'logger': logger
 }
 
+
 def init_pg_connection():
     path = __location__  
     hadas = read_credentials( path = path, cred_name = 'hadas')
@@ -34,13 +34,6 @@ def init_pg_connection():
         logging.error("Error while connecting to HADAS database: " + e.__str__())
         raise e
     return pg_conn
-
-def get_ids_notin():
-    pg_conn = init_pg_connection()
-    query = '''SELECT "MongoId" FROM dhealth."MongoIds"'''
-    ids = pd.read_sql(sql= query, con=pg_conn)
-    pg_conn.dispose()
-    return ids
 
 def create_mongo_conection():
     try:
@@ -54,18 +47,12 @@ def create_mongo_conection():
     return collections
 
 
-def get_data_from_mongo( UserId, collections):
-    # columns ={"_id": 0, "user_id": 1, "created_at": 1, "StartDateUtc": 1, "EndDateUtc": 1, "Ecg": 1, 'Accelerometer':1, 'HeartRate':1 }
-    _id = get_ids_notin()
-    id_list = []
-    for i in range( len(_id) ):
-        id_list.append( ObjectId(_id['MongoId'][i]))
-        
+def get_data_from_mongo( UserId, jsonId, collections):
+    Id = ObjectId(jsonId)
     query = {
         "$and": [
             {"user_id": UserId}
-            # ,{"_id": {"$in":id_list}}
-            ,{"_id": {"$nin":id_list}}         
+            ,{"_id": Id }         
         ]
     }
         
@@ -74,7 +61,6 @@ def get_data_from_mongo( UserId, collections):
 
 
 def manage_msg_body(body):
-    # insertion_time = datetime.now(tz=timezone.utc)
     log_args['function'] = 'manage_msg_body'
     log_args['datasource_id'] = None
     log_args['level'] = 'ERROR'
@@ -90,12 +76,12 @@ def manage_msg_body(body):
     messageType =  msg_body['messageType'] 
     sentTime = msg_body['sentTime'] 
     userId = msg_body['message']['userId']
-    
+    jsonId =  msg_body['message']['id']
     pg_conn.dispose()
-    return  messageId, conversationId, messageType, sentTime, userId
+    return  messageId, conversationId, messageType, sentTime, userId, jsonId
 
 def process_jsons(body):
-    messageId, conversationId, messageType, sentTime, userId = manage_msg_body(body)
+    messageId, conversationId, messageType, sentTime, userId, jsonId = manage_msg_body(body)
     log_args['function'] = 'process_jsons'
     log_args['datasource_id'] = None
     log_args['level'] = 'ERROR'
@@ -103,7 +89,7 @@ def process_jsons(body):
     collection_data  = [],[]
     collections = create_mongo_conection()
     try: 
-        collection_data = get_data_from_mongo( userId, collections) 
+        collection_data = get_data_from_mongo( userId,jsonId, collections) 
     except Exception as e:
         log_write(pg_conn , description="Error in retreaving data from mongo db" + e.__str__(), **log_args)
         
@@ -112,7 +98,7 @@ def process_jsons(body):
         log_write(pg_conn , description=f"Warning data is empty: json count { len(collection_data) }" , **log_args)
     pg_conn.dispose()
        
-    return collection_data, messageId, conversationId, messageType, sentTime, userId
+    return collection_data, messageId, conversationId, messageType, sentTime, userId, jsonId
 
 
 def calculate_heart_PA_ecg(collection_data_j):
@@ -262,7 +248,7 @@ def calculate_result(body):
     log_args['function'] = 'calculate_result'
 
     pg_conn = init_pg_connection()
-    collection_data, messageId, conversationId, messageType, sentTime, userId =  process_jsons(body)
+    collection_data, messageId, conversationId, messageType, sentTime, userId, jsonId =  process_jsons(body)
     
     data = dict()
     
@@ -328,10 +314,8 @@ def answear_to_msg(ch, data):
         log_write(pg_conn , description="Error while publishing msg in rabbitMQ: " + e.__str__(), **log_args)
 
 
-
-
 def on_request_message_received(ch, method, properties, body):
-    messageId, conversationId, messageType, sentTime, userId = manage_msg_body(body)
+    messageId, conversationId, messageType, sentTime, userId, jsonId = manage_msg_body(body)
     ExtraInfo = dict({
         'sentTime' : sentTime,
         'messageId' : messageId,
