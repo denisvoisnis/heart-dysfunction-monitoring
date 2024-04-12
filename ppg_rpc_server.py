@@ -64,24 +64,35 @@ def manage_msg_body(body):
     log_args['function'] = 'manage_msg_body'
     log_args['datasource_id'] = None
     log_args['level'] = 'ERROR'
+    Error_msg = []
     pg_conn = init_pg_connection()
     
     try:
         msg_body =json.loads(body)
     except Exception as e:
-        log_write(pg_conn , description="Could not load message json" + e.__str__(), **log_args)
-   
-    messageId = msg_body['messageId']
-    conversationId = msg_body['conversationId']
-    messageType =  msg_body['messageType'] 
-    sentTime = msg_body['sentTime'] 
-    userId = msg_body['message']['userId']
-    jsonId =  msg_body['message']['id']
+        Error_msg = "Could not load message json:" + e.__str__()
+        log_write(pg_conn , description= Error_msg , **log_args)
+        return  (None, )*6 + (Error_msg, )
+    try:
+        messageId = msg_body['messageId']
+        conversationId = msg_body['conversationId']
+        messageType =  msg_body['messageType'] 
+        sentTime = msg_body['sentTime'] 
+        userId = msg_body['message']['userId']
+        jsonId =  msg_body['message']['id']
+    except Exception as e:
+        Error_msg = "Could not get data from message:" + e.__str__()
+        log_write(pg_conn , description= Error_msg , **log_args)
+        return  (None, )*6 + (Error_msg, )
+    
     pg_conn.dispose()
-    return  messageId, conversationId, messageType, sentTime, userId, jsonId
+    return  messageId, conversationId, messageType, sentTime, userId, jsonId, Error_msg
 
 def process_jsons(body):
-    messageId, conversationId, messageType, sentTime, userId, jsonId = manage_msg_body(body)
+    messageId, conversationId, messageType, sentTime, userId, jsonId, Error_msg = manage_msg_body(body)
+    if len(Error_msg) > 10:
+        return None, messageId, conversationId, messageType, sentTime, userId, jsonId, Error_msg
+    
     log_args['function'] = 'process_jsons'
     log_args['datasource_id'] = None
     log_args['level'] = 'ERROR'
@@ -92,13 +103,16 @@ def process_jsons(body):
         collection_data = get_data_from_mongo( userId,jsonId, collections) 
     except Exception as e:
         log_write(pg_conn , description="Error in retreaving data from mongo db" + e.__str__(), **log_args)
-        
+        return  None, messageId, conversationId, messageType, sentTime, userId, jsonId, Error_msg
+
     if len(collection_data) == 0 :
         log_args['level'] = 'WARNING'
-        log_write(pg_conn , description=f"Warning data is empty: json count { len(collection_data) }" , **log_args)
+        Error_msg=f"Warning data is empty: json counts { len(collection_data)} for user {userId} and Json ID {jsonId} "
+        log_write(pg_conn , description=Error_msg, **log_args)
+        return  None, messageId, conversationId, messageType, sentTime, userId, jsonId, Error_msg
     pg_conn.dispose()
        
-    return collection_data, messageId, conversationId, messageType, sentTime, userId, jsonId
+    return collection_data, messageId, conversationId, messageType, sentTime, userId, jsonId, Error_msg
 
 
 def calculate_heart_PA_ecg(collection_data_j):
@@ -173,7 +187,6 @@ def calculate_heart_PA_ecg(collection_data_j):
     pg_conn.dispose()
     return df_sig_results_ecg.to_json(), df_walking_bouts_results_ecg.to_json(), Error_msg
 
-
     ##############################################################################################
 
 def calculate_heart_PA_ppg(collection_data_j):
@@ -246,11 +259,25 @@ def calculate_result(body):
     log_args['datasource_id'] = None
     log_args['level'] = 'ERROR'
     log_args['function'] = 'calculate_result'
+    data = dict()
 
     pg_conn = init_pg_connection()
-    collection_data, messageId, conversationId, messageType, sentTime, userId, jsonId =  process_jsons(body)
-    
-    data = dict()
+    collection_data, messageId, conversationId, messageType, sentTime, userId, jsonId, Error_msg =  process_jsons(body)
+    if len(Error_msg) > 1:
+        data[ jsonId ] = {
+                    'UserId' :userId,
+                    'df_sig_results' : None,
+                    'df_walking_bouts_results' : None,
+                    'position' : None,
+                    'messageId' : messageId,
+                    'conversationId' : conversationId,
+                    'device' : None,
+                    'testType' : None,
+                    'Error' :  Error_msg
+                }
+        data=json.dumps(data)        
+        return data
+
     
     for i, collection_data_j in enumerate(collection_data):
         df_sig_results =  []
@@ -315,7 +342,7 @@ def answear_to_msg(ch, data):
 
 
 def on_request_message_received(ch, method, properties, body):
-    messageId, conversationId, messageType, sentTime, userId, jsonId = manage_msg_body(body)
+    messageId, conversationId, messageType, sentTime, userId, jsonId, Error_msg = manage_msg_body(body)
     ExtraInfo = dict({
         'sentTime' : sentTime,
         'messageId' : messageId,
