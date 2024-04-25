@@ -279,7 +279,7 @@ def calculate_result(body):
     df_walking_bouts_results = []
     position = collection_data_j['position']
     device = 'polar'
-    testType = 'walking'
+    testType = collection_data_j['test_type']
     Error_msg = []
     
     if position == 'chest':
