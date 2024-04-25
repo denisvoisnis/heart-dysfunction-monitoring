@@ -10,11 +10,11 @@ from logging.handlers import RotatingFileHandler
 import json
 import pandas as pd
 from pymongo import MongoClient
-from bson import ObjectId
+from bson import ObjectId, BSON
 from heart_PA_ppg import heart_PA_ppg
 from heart_PA_ecg import heart_PA_ecg
 from utils_d import get_logger, create_postgresql_connection, log_write, read_credentials
-
+from gridfs import GridFS
 __location__ = str(os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(os.path.dirname(__file__))))) + "/config.yaml"
 
 logger = get_logger('Heart Dysfunction Monitoring PPG Rabbit MQ', level=logging.DEBUG)
@@ -40,23 +40,19 @@ def create_mongo_conection():
         path = __location__
         mongo_db = read_credentials( path = path, cred_name = 'mongo')
         client = MongoClient(mongo_db['credentials'])
-        collections= client[mongo_db['database']]['H10Data']
+        collections= client[mongo_db['database']]
     except Exception as e:
         logging.error(f"Error while connecting to Mongo {mongo_db['database'] } database: " + e.__str__())
         raise e
     return collections
 
 
+
 def get_data_from_mongo( UserId, jsonId, collections):
-    Id = ObjectId(jsonId)
-    query = {
-        "$and": [
-            {"user_id": UserId}
-            ,{"_id": Id }         
-        ]
-    }
-        
-    data = list(collections.find(query))
+    fs = GridFS( create_mongo_conection(), collection="H10Data")
+    _id = ObjectId(jsonId)
+    bytes_data = fs.get(_id).read()
+    data = BSON(bytes_data).decode()
     return data
 
 
@@ -66,7 +62,6 @@ def manage_msg_body(body):
     log_args['level'] = 'ERROR'
     Error_msg = []
     pg_conn = init_pg_connection()
-    
     try:
         msg_body =json.loads(body)
     except Exception as e:
@@ -185,7 +180,7 @@ def calculate_heart_PA_ecg(collection_data_j):
         pg_conn.dispose()
         return [],[], Error_msg
     pg_conn.dispose()
-    return df_sig_results_ecg.to_json(), df_walking_bouts_results_ecg.to_json(), Error_msg
+    return df_sig_results_ecg.to_json(orient='records'), df_walking_bouts_results_ecg.to_json(orient='records'), Error_msg
 
     ##############################################################################################
 
@@ -252,7 +247,7 @@ def calculate_heart_PA_ppg(collection_data_j):
         return [],[], Error_msg
     
     pg_conn.dispose()
-    return df_sig_results.to_json(), df_walking_bouts_results.to_json(), Error_msg
+    return df_sig_results.to_json(orient='records'), df_walking_bouts_results.to_json(orient='records'), Error_msg
 
  
 def calculate_result(body):
@@ -265,47 +260,47 @@ def calculate_result(body):
     collection_data, messageId, conversationId, messageType, sentTime, userId, jsonId, Error_msg =  process_jsons(body)
     if len(Error_msg) > 1:
         data[ jsonId ] = {
-                    'UserId' :userId,
-                    'df_sig_results' : None,
-                    'df_walking_bouts_results' : None,
-                    'position' : None,
-                    'messageId' : messageId,
-                    'conversationId' : conversationId,
-                    'device' : None,
-                    'testType' : None,
-                    'Error' :  Error_msg
-                }
-        data=json.dumps(data)        
+            'UserId' :userId,
+            'df_sig_results' : None,
+            'df_walking_bouts_results' : None,
+            'position' : None,
+            'messageId' : messageId,
+            'conversationId' : conversationId,
+            'device' : None,
+            'testType' : None,
+            'Error' :  Error_msg
+        }
+        data=json.dumps(data)    
         return data
 
     
-    for i, collection_data_j in enumerate(collection_data):
-        df_sig_results =  []
-        df_walking_bouts_results = []
-        position = collection_data_j['position']
-        device = 'polar'
-        testType = 'walking'
-        Error_msg = []
-        
-        if position == 'chest':
-            print('chest')
-            df_sig_results, df_walking_bouts_results, Error_msg = calculate_heart_PA_ecg(collection_data_j)
-        elif position == 'wrist':
-            print('wrist')
-            df_sig_results, df_walking_bouts_results, Error_msg = calculate_heart_PA_ppg(collection_data_j)
+    collection_data_j = collection_data
+    df_sig_results =  []
+    df_walking_bouts_results = []
+    position = collection_data_j['position']
+    device = 'polar'
+    testType = 'walking'
+    Error_msg = []
+    
+    if position == 'chest':
+        print('chest')
+        df_sig_results, df_walking_bouts_results, Error_msg = calculate_heart_PA_ecg(collection_data_j)
+    elif position == 'wrist':
+        print('wrist')
+        df_sig_results, df_walking_bouts_results, Error_msg = calculate_heart_PA_ppg(collection_data_j)
 
-        _id = collection_data_j['_id'].__str__()
-        data[_id] = {
-                    'UserId' :userId,
-                    'df_sig_results' : df_sig_results,
-                    'df_walking_bouts_results' : df_walking_bouts_results,
-                    'position' : position,
-                    'messageId' : messageId,
-                    'conversationId' : conversationId,
-                    'device' : device,
-                    'testType' : testType,
-                    'Error' :  Error_msg
-                }                       
+    _id = jsonId
+    data[_id] = {
+            'UserId' :userId,
+            'df_sig_results' : df_sig_results,
+            'df_walking_bouts_results' : df_walking_bouts_results,
+            'position' : position,
+            'messageId' : messageId,
+            'conversationId' : conversationId,
+            'device' : device,
+            'testType' : testType,
+            'Error' :  Error_msg
+        }               
     try:
         data=json.dumps(data)        
     except Exception as e:
@@ -349,7 +344,7 @@ def on_request_message_received(ch, method, properties, body):
         })
     data = calculate_result(body) 
     pg_conn = init_pg_connection()
-    print(data)
+    # print(data)
     try:
         answear_to_msg(ch, data)
     except Exception as e:
@@ -378,7 +373,6 @@ def on_request_message_received(ch, method, properties, body):
         log_args['function'] = 'all_data_log_ppg'
         log_write(pg_conn , description="Error while writing data to HeartDysfunctionReportCreated: " + e.__str__(), **log_args)
     pg_conn.dispose()
-
     
 
 def create_consumer():
