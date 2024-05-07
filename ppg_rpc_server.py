@@ -289,21 +289,22 @@ def calculate_result(body):
         print('wrist')
         df_sig_results, df_walking_bouts_results, Error_msg = calculate_heart_PA_ppg(collection_data_j)
 
-    _id = jsonId
-    data[_id] = {
+    data = {
         'message': {
+             '_id':  jsonId,
             'UserId' :userId,
             'df_sig_results' : df_sig_results,
             'df_walking_bouts_results' : df_walking_bouts_results,
             'position' : position,
             'messageId' : messageId,
+            # 'sourceAddress' : sourceAddress,
             'conversationId' : conversationId,
             'device' : device,
             'testType' : testType,
             'Error' :  Error_msg
-        },
+            },
         "messageType": messageType
-        }              
+        }             
     try:
         data=json.dumps(data)        
     except Exception as e:
