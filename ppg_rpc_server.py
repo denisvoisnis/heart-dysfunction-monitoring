@@ -291,6 +291,7 @@ def calculate_result(body):
 
     _id = jsonId
     data[_id] = {
+        'message': {
             'UserId' :userId,
             'df_sig_results' : df_sig_results,
             'df_walking_bouts_results' : df_walking_bouts_results,
@@ -300,7 +301,9 @@ def calculate_result(body):
             'device' : device,
             'testType' : testType,
             'Error' :  Error_msg
-        }               
+        },
+        "messageType": messageType
+        }              
     try:
         data=json.dumps(data)        
     except Exception as e:
