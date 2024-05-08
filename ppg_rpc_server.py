@@ -71,7 +71,7 @@ def manage_msg_body(body):
     try:
         messageId = msg_body['messageId']
         conversationId = msg_body['conversationId']
-        messageType =  msg_body['messageType'] 
+        messageType =  ["urn:message:Events.Measurements:HeartDysfunctionReportCreated"]
         sentTime = msg_body['sentTime'] 
         userId = msg_body['message']['userId']
         jsonId =  msg_body['message']['id']
