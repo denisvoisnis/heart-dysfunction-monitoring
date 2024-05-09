@@ -304,7 +304,6 @@ def calculate_result(body):
     
     try:
         data=json.dumps(data)  
-        print(data)
     except Exception as e:
         log_args['level'] = 'ERROR'
         Error_msg=f'Could not serialize dictionary into string: {e.__str__()}'
@@ -314,17 +313,17 @@ def calculate_result(body):
     return data
 
 def answear_to_msg(ch, data):
-    exchange_name='Events.Recommendations.HeartDysfunctionReportCreated'
-    ch.exchange_declare( exchange= exchange_name ,  exchange_type= ExchangeType.fanout, durable = True)
+    exchange_name_r='Events.Recommendations.HeartDysfunctionReportCreated'
+    ch.exchange_declare( exchange= exchange_name_r ,  exchange_type= ExchangeType.fanout, durable = True)
     queue_name = 'HeartDysfunctionReportCreated'
     reply_queue = ch.queue_declare(queue = queue_name , durable = True)
     properties=pika.BasicProperties(
         reply_to=reply_queue.method.queue,
         )
-    ch.queue_bind(queue_name, exchange_name)
+    ch.queue_bind(queue_name, exchange_name_r)
 
     try:
-        ch.basic_publish(exchange_name,
+        ch.basic_publish(exchange= exchange_name_r,
                          routing_key=properties.reply_to,
                          body=data,
                          properties=pika.BasicProperties(
@@ -334,7 +333,6 @@ def answear_to_msg(ch, data):
     except Exception as e:
         pg_conn = init_pg_connection()
         log_write(pg_conn , description="Error while publishing msg in rabbitMQ: " + e.__str__(), **log_args)
-
 
 def on_request_message_received(ch, method, properties, body):
     messageId, conversationId, messageType, sentTime, userId, jsonId, sourceAddress, Error_msg = manage_msg_body(body)
