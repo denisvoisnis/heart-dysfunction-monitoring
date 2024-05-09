@@ -318,7 +318,7 @@ def calculate_result(body):
 
 
 def answear_to_msg(ch, data):
-    exchange_name='Events.Measurements:HeartDysfunctionReportCreated'
+    exchange_name='Events.Recommendations.HeartDysfunctionReportCreated'
     ch.exchange_declare( exchange= exchange_name ,  exchange_type= ExchangeType.fanout, durable = True)
     queue_name = 'HeartDysfunctionReportCreated'
     reply_queue = ch.queue_declare(queue = queue_name , durable = True)
