@@ -46,8 +46,6 @@ def create_mongo_conection():
         raise e
     return collections
 
-
-
 def get_data_from_mongo( UserId, jsonId, collections):
     fs = GridFS( create_mongo_conection(), collection="H10Data")
     _id = ObjectId(jsonId)
@@ -67,24 +65,25 @@ def manage_msg_body(body):
     except Exception as e:
         Error_msg = "Could not load message json:" + e.__str__()
         log_write(pg_conn , description= Error_msg , **log_args)
-        return  (None, )*6 + (Error_msg, )
+        return  (None, )*7 + (Error_msg, )
     try:
         messageId = msg_body['messageId']
         conversationId = msg_body['conversationId']
-        messageType =  ["urn:message:Events.Measurements:HeartDysfunctionReportCreated"]
+        messageType = ['urn:message:Events.Measurements:HeartDysfunctionReportCreated']
         sentTime = msg_body['sentTime'] 
         userId = msg_body['message']['userId']
         jsonId =  msg_body['message']['id']
+        sourceAddress =  msg_body['sourceAddress']
     except Exception as e:
         Error_msg = "Could not get data from message:" + e.__str__()
         log_write(pg_conn , description= Error_msg , **log_args)
-        return  (None, )*6 + (Error_msg, )
+        return  (None, )*7 + (Error_msg, )
     
     pg_conn.dispose()
-    return  messageId, conversationId, messageType, sentTime, userId, jsonId, Error_msg
+    return  messageId, conversationId, messageType, sentTime, userId, jsonId, sourceAddress, Error_msg
 
 def process_jsons(body):
-    messageId, conversationId, messageType, sentTime, userId, jsonId, Error_msg = manage_msg_body(body)
+    messageId, conversationId, messageType, sentTime, userId, jsonId, sourceAddress, Error_msg = manage_msg_body(body)
     if len(Error_msg) > 10:
         return None, messageId, conversationId, messageType, sentTime, userId, jsonId, Error_msg
     
@@ -98,16 +97,16 @@ def process_jsons(body):
         collection_data = get_data_from_mongo( userId,jsonId, collections) 
     except Exception as e:
         log_write(pg_conn , description="Error in retreaving data from mongo db" + e.__str__(), **log_args)
-        return  None, messageId, conversationId, messageType, sentTime, userId, jsonId, Error_msg
+        return  None, messageId, conversationId, messageType, sentTime, userId, jsonId, sourceAddress, Error_msg
 
     if len(collection_data) == 0 :
         log_args['level'] = 'WARNING'
         Error_msg=f"Warning data is empty: json counts { len(collection_data)} for user {userId} and Json ID {jsonId} "
         log_write(pg_conn , description=Error_msg, **log_args)
-        return  None, messageId, conversationId, messageType, sentTime, userId, jsonId, Error_msg
+        return  None, messageId, conversationId, messageType, sentTime, userId, jsonId, sourceAddress, Error_msg
     pg_conn.dispose()
        
-    return collection_data, messageId, conversationId, messageType, sentTime, userId, jsonId, Error_msg
+    return collection_data, messageId, conversationId, messageType, sentTime, userId, jsonId, sourceAddress, Error_msg
 
 
 def calculate_heart_PA_ecg(collection_data_j):
@@ -257,7 +256,7 @@ def calculate_result(body):
     data = dict()
 
     pg_conn = init_pg_connection()
-    collection_data, messageId, conversationId, messageType, sentTime, userId, jsonId, Error_msg =  process_jsons(body)
+    collection_data, messageId, conversationId, messageType, sentTime, userId, jsonId, sourceAddress, Error_msg =  process_jsons(body)
     if len(Error_msg) > 1:
         data[ jsonId ] = {
             'UserId' :userId,
@@ -288,25 +287,24 @@ def calculate_result(body):
     elif position == 'wrist':
         print('wrist')
         df_sig_results, df_walking_bouts_results, Error_msg = calculate_heart_PA_ppg(collection_data_j)
-
     data = {
         'message': {
              '_id':  jsonId,
-            'UserId' :userId,
+            'UserId': userId,
             'df_sig_results' : df_sig_results,
             'df_walking_bouts_results' : df_walking_bouts_results,
             'position' : position,
             'messageId' : messageId,
-            # 'sourceAddress' : sourceAddress,
             'conversationId' : conversationId,
             'device' : device,
             'testType' : testType,
             'Error' :  Error_msg
-            },
-        "messageType": messageType
-        }             
+        },        "messageType": messageType
+              } 
+    
     try:
-        data=json.dumps(data)        
+        data=json.dumps(data)  
+        print(data)
     except Exception as e:
         log_args['level'] = 'ERROR'
         Error_msg=f'Could not serialize dictionary into string: {e.__str__()}'
@@ -314,8 +312,6 @@ def calculate_result(body):
         pg_conn.dispose()
         return Error_msg
     return data
-
-
 
 def answear_to_msg(ch, data):
     exchange_name='Events.Recommendations.HeartDysfunctionReportCreated'
@@ -328,7 +324,7 @@ def answear_to_msg(ch, data):
     ch.queue_bind(queue_name, exchange_name)
 
     try:
-        ch.basic_publish(exchange= exchange_name,
+        ch.basic_publish(exchange_name,
                          routing_key=properties.reply_to,
                          body=data,
                          properties=pika.BasicProperties(
@@ -341,14 +337,14 @@ def answear_to_msg(ch, data):
 
 
 def on_request_message_received(ch, method, properties, body):
-    messageId, conversationId, messageType, sentTime, userId, jsonId, Error_msg = manage_msg_body(body)
+    messageId, conversationId, messageType, sentTime, userId, jsonId, sourceAddress, Error_msg = manage_msg_body(body)
     ExtraInfo = dict({
         'sentTime' : sentTime,
         'messageId' : messageId,
+        'sourceAddress' : sourceAddress
         })
     data = calculate_result(body) 
     pg_conn = init_pg_connection()
-    # print(data)
     try:
         answear_to_msg(ch, data)
     except Exception as e:
@@ -369,21 +365,17 @@ def on_request_message_received(ch, method, properties, body):
 
         
         all_data_log = pd.DataFrame(d,  index=[0])
-        # all_data_log = pd.DataFrame(d,  index=None)
         pd.DataFrame.from_dict(d, orient='index')
-        # print(all_data_log)
         all_data_log.to_sql('PhysicalActivityReports', con=pg_conn, schema='dhealth', if_exists='append', index=False, method='multi')
     except Exception as e:
         log_args['function'] = 'all_data_log_ppg'
         log_write(pg_conn , description="Error while writing data to HeartDysfunctionReportCreated: " + e.__str__(), **log_args)
     pg_conn.dispose()
     
-
 def create_consumer():
     creadentials =  read_credentials(  str(__location__), "rabbitmq")['credentials'] 
     connection = pika.BlockingConnection(pika.URLParameters(creadentials))
     channel = connection.channel()
-    # channel.basic_qos(prefetch_count=1)
     exchange_name = 'Events.Measurements:PolarH10DataUploaded'
     queue_name ='PolarH10DataUploaded'
     channel.exchange_declare( exchange= exchange_name ,  exchange_type= ExchangeType.fanout, durable = True)
@@ -396,3 +388,4 @@ def create_consumer():
     channel.start_consuming()
 
 create_consumer()
+
